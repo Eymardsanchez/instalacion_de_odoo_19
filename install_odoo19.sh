@@ -1,6 +1,6 @@
 #!/bin/bash
-# Script de instalación de Odoo 17 Community en Ubuntu Server
-# Ejecutar con privilegios de sudo: sudo bash install_odoo.sh
+# Script de instalación de Odoo 19.0 Community en Ubuntu Server 22.04 / 24.04
+# Ejecutar con privilegios de sudo: sudo bash install_odoo19.sh
 
 set -e
 
@@ -12,47 +12,59 @@ ODOO_PORT="8069"
 ODOO_CONF="/etc/odoo.conf"
 # ----------------------------------
 
-echo "=== 1. Actualizando paquetes del sistema ==="
+echo "=== 1. Actualizando repositorio y paquetes del sistema ==="
 sudo apt update && sudo apt upgrade -y
 
-echo "=== 2. Instalando PostgreSQL y dependencias ==="
-sudo apt install -y postgresql postgresql-contrib python3-pip python3-dev \
-  python3-venv build-essential libxml2-dev libxslt1-dev zlib1g-dev \
-  libsasl2-dev libldap2-dev libjpeg-dev libpq-dev git wget
+echo "=== 2. Instalando Python 3.12, PostgreSQL y herramientas de desarrollo ==="
+# Instalamos Python 3.12, paquetes de C/Rust para evitar fallos de librerías y dependencias clave
+sudo apt install -y postgresql postgresql-contrib python3.12 python3.12-venv python3.12-dev \
+  python3-pip build-essential libxml2-dev libxslt1-dev zlib1g-dev \
+  libsasl2-dev libldap2-dev libjpeg-dev libpq-dev libssl-dev libffi-dev \
+  cargo rustc git wget curl
 
-echo "=== 3. Creando el usuario del sistema y la base de datos ==="
-# Crear usuario del sistema si no existe
+echo "=== 3. Creando usuario del sistema y estructura de directorios ==="
 if ! id -u "$ODOO_USER" >/dev/null 2>&1; then
     sudo useradd -m -d $ODOO_HOME -U -r -s /bin/bash $ODOO_USER
 fi
 
-# Crear usuario en PostgreSQL con el mismo nombre
+# Asignar permisos explícitos sobre la carpeta de Odoo desde el inicio
+sudo mkdir -p $ODOO_HOME
+sudo chown -R $ODOO_USER:$ODOO_USER $ODOO_HOME
+
+echo "=== 4. Configurando usuario en PostgreSQL ==="
 sudo -u postgres createuser -s $ODOO_USER 2>/dev/null || true
 
-echo "=== 4. Clonando Odoo $ODOO_VERSION ==="
+echo "=== 5. Clonando el repositorio oficial de Odoo $ODOO_VERSION ==="
 if [ ! -d "$ODOO_HOME/odoo" ]; then
     sudo -u $ODOO_USER git clone --depth 1 --branch $ODOO_VERSION https://www.github.com/odoo/odoo $ODOO_HOME/odoo
 fi
 
-echo "=== 5. Creando entorno virtual e instalando requisitos de Python ==="
-sudo -u $ODOO_USER python3 -m venv $ODOO_HOME/venv
-sudo -u $ODOO_USER $ODOO_HOME/venv/bin/pip install --upgrade pip
+echo "=== 6. Creando entorno virtual (Python 3.12) y ajustando permisos ==="
+# Forzamos la creación del venv con Python 3.12 a nombre del usuario 'odoo'
+sudo -u $ODOO_USER python3.12 -m venv $ODOO_HOME/venv
+
+echo "=== 7. Instalando paquetes de Python (requirements.txt) ==="
+# Actualizamos pip, setuptools y wheel antes de compilar dependencias
+sudo -u $ODOO_USER $ODOO_HOME/venv/bin/pip install --upgrade pip setuptools wheel
+
+# Instalamos los requerimientos de la versión 19
 sudo -u $ODOO_USER $ODOO_HOME/venv/bin/pip install -r $ODOO_HOME/odoo/requirements.txt
 
-echo "=== 6. Instalando wkhtmltopdf (para exportar reportes en PDF) ==="
+echo "=== 8. Instalando wkhtmltopdf (Reportes PDF) ==="
 cd /tmp
-wget https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/wkhtmltox_0.12.6.1-2.jammy_amd64.deb -O wkhtmltox.deb
+wget -q https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/wkhtmltox_0.12.6.1-2.jammy_amd64.deb -O wkhtmltox.deb
 sudo apt install -y ./wkhtmltox.deb
-rm wkhtmltox.deb
+rm -f wkhtmltox.deb
 
-echo "=== 7. Creando directorio de módulos personalizados y logs ==="
+echo "=== 9. Creando directorios para módulos personalizados y logs ==="
 sudo mkdir -p $ODOO_HOME/custom-addons
 sudo mkdir -p /var/log/odoo
-sudo chown -R $ODOO_USER:$ODOO_USER $ODOO_HOME/custom-addons
+
+# Ajuste global de propiedad sobre todas las rutas de Odoo
+sudo chown -R $ODOO_USER:$ODOO_USER $ODOO_HOME
 sudo chown -R $ODOO_USER:$ODOO_USER /var/log/odoo
 
-echo "=== 8. Generando archivo de configuración ==="
-# Generar una contraseña aleatoria para la administración de bases de datos
+echo "=== 10. Generando archivo de configuración /etc/odoo.conf ==="
 ADMIN_PASSWD=$(openssl rand -hex 12)
 
 sudo bash -c "cat <<EOF > $ODOO_CONF
@@ -70,7 +82,7 @@ EOF"
 sudo chown $ODOO_USER:$ODOO_USER $ODOO_CONF
 sudo chmod 640 $ODOO_CONF
 
-echo "=== 9. Creando servicio systemd para Odoo ==="
+echo "=== 11. Creando servicio de systemd para autoinicio ==="
 sudo bash -c "cat <<EOF > /etc/systemd/system/odoo.service
 [Unit]
 Description=Odoo $ODOO_VERSION
@@ -88,15 +100,14 @@ StandardOutput=journal+console
 WantedBy=multi-user.target
 EOF"
 
-echo "=== 10. Iniciando el servicio ==="
 sudo systemctl daemon-reload
 sudo systemctl enable --now odoo
 
 echo ""
 echo "============================================================"
-echo " ¡Instalación completada con éxito!"
+echo " ¡Odoo $ODOO_VERSION instalado correctamente!"
 echo " Contraseña maestra de BD (admin_passwd): $ADMIN_PASSWD"
-echo " Guarda esta contraseña en un lugar seguro."
+echo " Guarda tu contraseña en un lugar seguro."
 echo ""
-echo " Accede desde tu navegador en: http://<IP_DE_TU_SERVIDOR>:$ODOO_PORT"
+echo " Accede a la interfaz web en: http://<IP_DE_TU_SERVIDOR>:$ODOO_PORT"
 echo "============================================================"
