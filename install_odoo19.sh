@@ -7,7 +7,7 @@ set -e
 # --- VARIABLES DE CONFIGURACIÓN ---
 ODOO_USER="odoo"
 ODOO_HOME="/opt/$ODOO_USER"
-ODOO_VERSION="17.0"
+ODOO_VERSION="19.0"
 ODOO_PORT="8069"
 ODOO_CONF="/etc/odoo.conf"
 # ----------------------------------
